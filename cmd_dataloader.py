@@ -47,7 +47,7 @@ class CondensedMoviesClips(Dataset):
 
     def __init__(self, file, root, mode, transforms=None, save_dir="", num=0):
 
-        self.data = make_dataset(root, mode)
+        self.data = make_dataset(file, root)
         self.file = file
         self.root = root
         self.mode = mode

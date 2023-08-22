@@ -13,6 +13,7 @@ import videotransforms
 import numpy as np
 from pytorch_i3d import InceptionI3d
 from cmd_dataloader import CondensedMoviesClips as Dataset
+from tqdm import tqdm
 
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
 parser = argparse.ArgumentParser()
@@ -22,42 +23,61 @@ parser.add_argument('-root', type=str)
 parser.add_argument('-gpu', type=str)
 parser.add_argument('-save_dir', type=str)
 args = parser.parse_args()
-os.environ["CUDA_VISIBLE_DEVICES"]=args.gpu
+#os.environ["CUDA_VISIBLE_DEVICES"]=args.gpu
+
+print("-------------------------------------")
+#print args parse summary on the terminal
+print("Mode: ", args.mode)
+print("Load Model: ", args.load_model)
+print("Root: ", args.root)
+print("GPU: ", "cuda:"+args.gpu)
+print("Save Dir: ", args.save_dir)
+print("-------------------------------------")
+
+
+if(args.gpu):
+    device = torch.device("cuda:"+args.gpu)
 
 
 def run(mode='rgb', root='/ssd_scratch/cvit/varun/videos', file='vid_info.json', batch_size=1, load_model='', save_dir=''):
 
-    transforms = transforms.Compose([videotransforms.RandomCrop(224)])
-    dataset = Dataset(file, root, mode, transforms, save_dir=save_dir)
-    dataloader = torch.utils.data.Dataloader(dataset, batch_size = batch_size, shuffle=True, num_workers=8, pin_memory = True)
+    transform = transforms.Compose([videotransforms.RandomCrop(224)])
+    dataset = Dataset(file, root, mode, transform, save_dir=save_dir)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size = batch_size, shuffle=True, num_workers=8, pin_memory = True)
 
+    print("Loading I3D model ...")
     if mode == "rgb":
         i3d = InceptionI3d(400, in_channels=3)
     i3d.replace_logits(400)
     i3d.load_state_dict(torch.load(load_model))
-    i3d.cuda()
+    #i3d.cuda()
+    i3d.to(device = device)
 
     i3d.train(False)
 
-    for data in dataloader:
+    for data in tqdm(dataloader, desc="Extracting Video Features and Saving to"+ args.save_dir):
+
         inputs, name = data
         if os.path.exists(os.path.join(save_dir, name[0]+".npy")): #TODO Check if name[0] is correct.
             continue
 
         b, c, t, h, w = inputs.shape
         if t > 1600:
-            features = []
-            for start in range(1, t-56, 1600):
-                end = min(t-1, start+1600+56)
-                start = max(1, start-48)
-                ip = Variable(torch.from_numpy(inputs.numpy()[:,:,start:end]).cuda(), volatile=True)
-                features.append(i3d.extract_features(ip).squeeze(0).permute(1,2,3,0).data.cpu().numpy())
-            np.save(os.path.join(save_dir, name[0]), np.concatenate(features, axis=0))
+            with torch.no_grad():
+                features = []
+                for start in range(1, t-56, 1600):
+                    end = min(t-1, start+1600+56)
+                    start = max(1, start-48)
+                    ip = Variable(torch.from_numpy(inputs.numpy()[:,:,start:end]).to(device = device), volatile=True)
+                    features.append(i3d.extract_features(ip).squeeze(0).permute(1,2,3,0).data.cpu().numpy())
+                np.save(os.path.join(save_dir, name[0]), np.concatenate(features, axis=0))
         else:
-            # wrap them in Variable
-            inputs = Variable(inputs.cuda(), volatile=True)
-            features = i3d.extract_features(inputs)
-            np.save(os.path.join(save_dir, name[0]), features.squeeze(0).permute(1,2,3,0).data.cpu().numpy())
+            with torch.no_grad():
+                # wrap them in Variable
+                #inputs = Variable(inputs.cuda(), volatile=True)
+                inputs = Variable(inputs.to(device=device))
+                features = i3d.extract_features(inputs)
+                np.save(os.path.join(save_dir, name[0]), features.squeeze(0).permute(1,2,3,0).data.cpu().numpy())
 
 
 
